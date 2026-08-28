@@ -23,6 +23,31 @@ _cached_user = None
 _cached_pass = None
 
 
+_OP_TOKEN_FILE = os.path.expanduser("~/.config/op/service-account-token")
+
+
+def _op_env():
+    """`op` needs OP_SERVICE_ACCOUNT_TOKEN. A GUI-launched Claude never sources
+    ~/.zshrc, so fall back to a 0600 token file when the variable is absent."""
+    env = dict(os.environ)
+    if not env.get("OP_SERVICE_ACCOUNT_TOKEN"):
+        try:
+            with open(_OP_TOKEN_FILE) as fh:
+                token = fh.read().strip()
+        except OSError:
+            return env
+        if token:
+            env["OP_SERVICE_ACCOUNT_TOKEN"] = token
+    return env
+
+
+def _op_read(ref):
+    return subprocess.run(
+        ["op", "read", ref],
+        capture_output=True, text=True, check=True, env=_op_env(),
+    ).stdout.strip()
+
+
 def _get_credentials():
     global _cached_user, _cached_pass
     if _cached_user and _cached_pass:
@@ -32,14 +57,8 @@ def _get_credentials():
     if env_user and env_pass:
         _cached_user, _cached_pass = env_user, env_pass
         return _cached_user, _cached_pass
-    _cached_user = subprocess.run(
-        ["op", "read", "op://Claude/Proton Bridge MCP/username"],
-        capture_output=True, text=True, check=True,
-    ).stdout.strip()
-    _cached_pass = subprocess.run(
-        ["op", "read", "op://Claude/Proton Bridge MCP/password"],
-        capture_output=True, text=True, check=True,
-    ).stdout.strip()
+    _cached_user = _op_read("op://Claude/Proton Bridge MCP/username")
+    _cached_pass = _op_read("op://Claude/Proton Bridge MCP/password")
     return _cached_user, _cached_pass
 
 

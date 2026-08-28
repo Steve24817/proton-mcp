@@ -335,3 +335,26 @@ def test_dotenv_never_opened(monkeypatch):
 
     for p in opened:
         assert not p.endswith(".env"), f".env should not be opened, but got {p}"
+
+
+def test_op_env_falls_back_to_token_file(tmp_path, monkeypatch):
+    """A GUI-launched Claude has no OP_SERVICE_ACCOUNT_TOKEN; the 0600 file supplies it."""
+    tf = tmp_path / "service-account-token"
+    tf.write_text("tok-from-file\n")
+    monkeypatch.setattr(proton_mcp, "_OP_TOKEN_FILE", str(tf))
+    monkeypatch.delenv("OP_SERVICE_ACCOUNT_TOKEN", raising=False)
+    assert proton_mcp._op_env()["OP_SERVICE_ACCOUNT_TOKEN"] == "tok-from-file"
+
+
+def test_op_env_prefers_real_environment(tmp_path, monkeypatch):
+    tf = tmp_path / "service-account-token"
+    tf.write_text("tok-from-file")
+    monkeypatch.setattr(proton_mcp, "_OP_TOKEN_FILE", str(tf))
+    monkeypatch.setenv("OP_SERVICE_ACCOUNT_TOKEN", "tok-from-env")
+    assert proton_mcp._op_env()["OP_SERVICE_ACCOUNT_TOKEN"] == "tok-from-env"
+
+
+def test_op_env_survives_missing_token_file(monkeypatch):
+    monkeypatch.setattr(proton_mcp, "_OP_TOKEN_FILE", "/nonexistent/token")
+    monkeypatch.delenv("OP_SERVICE_ACCOUNT_TOKEN", raising=False)
+    assert "OP_SERVICE_ACCOUNT_TOKEN" not in proton_mcp._op_env()
