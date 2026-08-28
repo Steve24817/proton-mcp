@@ -56,6 +56,16 @@ op read "op://Claude/Proton Bridge MCP/username"
 op read "op://Claude/Proton Bridge MCP/password"
 ```
 
+`op` itself needs `OP_SERVICE_ACCOUNT_TOKEN`. A GUI-launched Claude never sources
+`~/.zshrc`, so when that variable is absent the server falls back to reading it from
+`~/.config/op/service-account-token` (mode 0600). Create that file once:
+
+```bash
+mkdir -p ~/.config/op && chmod 700 ~/.config/op
+printf '%s' "$OP_SERVICE_ACCOUNT_TOKEN" > ~/.config/op/service-account-token
+chmod 600 ~/.config/op/service-account-token
+```
+
 The stored secret is a **Bridge-specific password**, not the Proton account password;
 it grants access only to the local Bridge listener. There is no `.env` file, and
 `python-dotenv` is not a dependency.

@@ -34,7 +34,11 @@ file under 400 lines.
 ## Working on it
 
 Credentials come from 1Password (`op://Claude/Proton Bridge MCP`), never a file. Do not
-add a `.env` or a `dotenv` dependency. Never log message subjects, bodies, addresses,
+add a `.env` or a `dotenv` dependency. MCP servers are spawned without a login shell, so
+`OP_SERVICE_ACCOUNT_TOKEN` is absent from the environment; `_op_env()` falls back to
+`~/.config/op/service-account-token` (0600). Verify any credential change under
+`env -i` with only HOME and PATH set, or it will pass locally and fail when Claude
+launches it. Never log message subjects, bodies, addresses,
 or credentials.
 
 IMAP quirks that have bitten this code before, all covered by tests:
