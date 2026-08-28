@@ -1,220 +1,88 @@
-# Proton MCP Server
+# proton-mcp
 
-A Model Context Protocol (MCP) server that provides AI assistants with access to ProtonMail functionality through the Proton Bridge. Enables email management, junk filtering, and automatic unsubscription directly from Claude Desktop and other MCP-compatible AI tools.
+An MCP server for reading ProtonMail through a locally running
+[Proton Bridge](https://proton.me/mail/bridge), plus the ability to create a draft.
+It speaks IMAP to `127.0.0.1` only. It does not talk to any cloud API.
 
-## Features
+## What it does
 
-### 📧 Core Email Operations
-- **Search emails** with IMAP queries and filtering
-- **Send emails** with reply-to support
-- **Retrieve full email content** including attachments info
-- **Move emails** between folders (Inbox, Spam, Trash, etc.)
-- **Get recent emails** within specified time ranges
+| Tool | What it does |
+|------|--------------|
+| `list_folders` | Lists the folders on the account. |
+| `search_messages` | Searches a folder by sender, subject, and date range. Returns headers only. |
+| `read_message` | Returns one message: headers and body text. |
+| `create_draft` | Writes a draft into the Drafts folder. **Never sends it.** |
 
-### 🛡️ Advanced Junk Filtering  
-- **Pattern-based spam detection** using regular expressions
-- **Bulk email analysis** with junk scoring (unlikely/low/medium/high)
-- **Auto-move to Spam folder** for detected junk emails
-- **Smart filtering** that learns from common spam patterns
-- **Whitelist-friendly** - focuses on obvious spam indicators
+Four tools. The whole server is one file you can read in a sitting.
 
-### 🚫 Automatic Unsubscribe
-- **RFC 2369 compliance** - parses List-Unsubscribe headers
-- **RFC 8058 one-click** unsubscribe support
-- **Bulk unsubscribe** from multiple mailing lists
-- **Mailing list detection** - identifies frequent senders
-- **Safety controls** - all actions require explicit confirmation
+## What it deliberately does not do, and why
 
-## Prerequisites
+This repository previously held a 2,505-line fork of unknown provenance exposing 27
+tools. It could send mail as the account owner and bulk-delete mailboxes. Its history
+includes a commit titled *"Apply security fixes from upstream PR #3"* — security
+defects were found in that code once, and the fix arrived by merge rather than by
+anyone here reading it. It was rebuilt from scratch in August 2026.
 
-1. **ProtonMail Account** - Any ProtonMail plan (Free/Plus/Business)
-2. **Proton Bridge** - Downloaded and running locally
-   - Get it from: https://proton.me/mail/bridge
-   - Must be running during MCP server operation
-3. **Claude Desktop** - For AI integration
-   - Download from: https://claude.ai/download
+Before the rebuild we counted what had ever actually called those 27 tools across
+every Claude session on this machine: **22 calls, using 4 tools** — `search_emails`,
+`get_recent_emails`, `get_mailboxes`, `get_email_content`. All four are reads. The
+other 23 tools, including every destructive one, were never called once.
 
-## Installation
+**Sending is absent, not disabled.** There is no `send_email` tool, and `smtplib` is
+not imported anywhere in this repository — a test enforces that. The server is
+structurally incapable of sending mail, rather than merely choosing not to. This
+mirrors a boundary that has held up well elsewhere in the estate: the CRM's
+`ship_to_outlook_draft` writes a draft and a human presses send.
 
-### 1. Clone and Setup
-```bash
-git clone <repository-url>
-cd proton-mcp-server
-```
+**Destructive operations are absent, not gated.** No delete, no expunge, no move, no
+folder creation or deletion, no flag changes beyond marking a new draft as a draft.
+The old server's `bulk_delete_emails`, `delete_folder` and `delete_filter_rule` are
+gone. An assistant should not perform these unattended, and for an operation like
+that the safest implementation is absence — a confirmation prompt is only as good as
+the attention of whoever is reading it, and prompts get approved by habit.
 
-### 2. Set Up Virtual Environment
-To isolate dependencies and avoid conflicts with other Python projects, create and activate a virtual environment:
+**The convenience surface is gone**: filter rules, unsubscribe automation, junk
+scoring, and the bulk variants of everything. None of it was ever used. Starting from
+27 tools is how the original reached 2,505 lines. If one of these turns out to be
+genuinely needed, add it back deliberately, with a reason, and a test.
 
-```bash
-# Create a virtual environment named 'venv'
-python3 -m venv venv
+## Credentials
 
-# Activate the virtual environment
-# On Linux/macOS:
-source venv/bin/activate
-
-# On Windows:
-venv\Scripts\activate
-```
-
-Once activated, your terminal prompt should change to indicate the virtual environment is active (e.g., `(venv)`). To deactivate the virtual environment later, simply run:
-```bash
-deactivate
-```
-
-### 3. Install Dependencies
-With the virtual environment activated, install the required dependencies from `requirements.txt`:
+Credentials live in 1Password, not in a file. The server reads them at startup via the
+`op` CLI, authenticated by the `OP_SERVICE_ACCOUNT_TOKEN` already in the environment:
 
 ```bash
-pip install -r requirements.txt
+op read "op://Claude/Proton Bridge MCP/username"
+op read "op://Claude/Proton Bridge MCP/password"
 ```
 
-To ensure reproducibility, verify that all dependencies are installed correctly by running:
+The stored secret is a **Bridge-specific password**, not the Proton account password;
+it grants access only to the local Bridge listener. There is no `.env` file, and
+`python-dotenv` is not a dependency.
+
+The server never logs message subjects, bodies, addresses, or credentials. It logs
+connection events and errors only.
+
+## Setup
+
 ```bash
-pip list
+python3 -m venv venv && ./venv/bin/python3 -m pip install -r requirements.txt
 ```
 
-### 4. Configure Environment
+Register it with Claude Code (note: no secrets in the registration):
+
 ```bash
-# Copy example environment file
-cp .env.example .env
-
-# Edit .env with your credentials
-nano .env  # or your preferred editor
+claude mcp add proton-mail --scope user -- /Users/stephengray/Developer/tools/proton-mcp/venv/bin/python3 /Users/stephengray/Developer/tools/proton-mcp/proton_mcp.py
 ```
 
-Update `.env` with your Proton details:
-```env
-PROTON_EMAIL=your-email@proton.me
-PROTON_BRIDGE_PASSWORD=your-bridge-app-password
+Proton Bridge must be running. It listens on `127.0.0.1:1143` and requires STARTTLS
+with a self-signed local certificate. Override with `BRIDGE_IMAP_HOST` /
+`BRIDGE_IMAP_PORT` if your Bridge is configured differently.
+
+## Tests
+
+```bash
+./venv/bin/python3 -m pytest tests/ -q
 ```
 
-**Getting your Bridge password:**
-1. Open Proton Bridge application
-2. Go to Settings → Account
-3. Generate or copy your Bridge password (not your regular Proton password!)
-
-### 5. Configure Claude Desktop
-
-Edit your Claude Desktop configuration file:
-- **macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`  
-- **Windows**: `%APPDATA%\\Claude\\claude_desktop_config.json`
-
-Add this MCP server configuration:
-```json
-{
-  "mcpServers": {
-    "proton-email": {
-      "command": "/path/to/your/proton-mcp-server/venv/bin/python",
-      "args": ["/path/to/your/proton-mcp-server/proton-email-server.py"],
-      "env": {
-        "BRIDGE_IMAP_HOST": "127.0.0.1",
-        "BRIDGE_IMAP_PORT": "1143", 
-        "BRIDGE_SMTP_HOST": "127.0.0.1",
-        "BRIDGE_SMTP_PORT": "1025",
-        "PROTON_EMAIL": "your-email@proton.me",
-        "PROTON_BRIDGE_PASSWORD": "your-bridge-app-password"
-      }
-    }
-  }
-}
-```
-
-**Replace the paths** with your actual system paths.
-
-### 6. Restart Claude Desktop
-
-Completely quit and restart Claude Desktop for the configuration to take effect.
-
-## Usage Examples
-
-### Basic Email Operations
-```
-# Search recent emails
-search_emails(query="ALL", limit=10)
-
-# Get specific email content
-get_email_content(email_id="123")
-
-# Send an email
-send_email(to="friend@example.com", subject="Hello", body="Hi there!")
-```
-
-### Junk Email Filtering
-```
-# Analyze emails for junk
-filter_junk_emails(limit=20, action="analyze")
-
-# Auto-move junk to Spam folder
-filter_junk_emails(limit=20, action="move_to_spam")
-
-# Search emails excluding junk
-search_emails_filtered(query="ALL", exclude_junk=true)
-```
-
-### Automatic Unsubscribe
-```
-# Find unsubscribe opportunities
-bulk_find_unsubscribe_opportunities(days=30)
-
-# Unsubscribe from specific email
-unsubscribe_from_email(email_id="123", confirm=true)
-
-# Identify mailing list senders  
-get_mailing_list_senders(days=30, min_emails=3)
-```
-
-## Available MCP Tools
-
-| Tool | Description |
-|------|-------------|
-| `search_emails` | Search emails with IMAP queries |
-| `get_email_content` | Get full content of specific email |
-| `send_email` | Send email via SMTP |
-| `get_recent_emails` | Get emails from recent days |
-| `filter_junk_emails` | Analyze/filter junk emails |
-| `analyze_email_for_junk` | Detailed junk analysis |
-| `move_email_to_folder` | Move emails between folders |
-| `get_mailboxes` | List available folders |
-| `search_emails_filtered` | Search with junk filtering |
-| `find_unsubscribe_links` | Find unsubscribe methods |
-| `unsubscribe_from_email` | Execute unsubscribe |
-| `bulk_find_unsubscribe_opportunities` | Bulk unsubscribe discovery |
-| `get_mailing_list_senders` | Identify frequent senders |
-
-## Security & Privacy
-
-- **Local operation** - All processing happens on your machine
-- **No data collection** - No analytics or tracking
-- **Proton Bridge required** - Uses official Proton encryption
-- **Standard protocols** - IMAP/SMTP only, no proprietary APIs
-- **Safety controls** - Destructive actions require confirmation
-
-## Troubleshooting
-
-### Connection Issues
-- Ensure Proton Bridge is running and logged in
-- Check that ports 1143 (IMAP) and 1025 (SMTP) are available
-- Verify your Bridge password (not your regular Proton password)
-
-### Claude Desktop Integration
-- Restart Claude Desktop completely after config changes
-- Check file paths in configuration are absolute paths
-- Ensure Python virtual environment is activated
-
-### Performance
-- Large mailboxes may take time to analyze
-- Consider using smaller `limit` parameters for testing
-- Bulk operations include rate limiting to be respectful
-
-## Contributing
-
-Contributions are welcome! Please feel free to submit issues, feature requests, or pull requests.
-
-## License
-
-This project is open source. Please respect ProtonMail's Terms of Service when using this tool.
-
-## Disclaimer
-
-This tool is not affiliated with or endorsed by Proton AG. Use at your own discretion and ensure compliance with your organization's email policies.
+The tests use a fake IMAP object and touch no network and no real mailbox.

@@ -3,3 +3,4 @@ __pycache__/
 *.env
 venv/
 filter_rules.json
+.pytest_cache/
