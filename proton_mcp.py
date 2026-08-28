@@ -6,6 +6,7 @@ import ssl
 import subprocess
 import email
 from datetime import datetime
+from email.header import decode_header, make_header
 from email.mime.text import MIMEText
 from email.utils import formatdate
 
@@ -109,6 +110,16 @@ def _sanitize(value):
     return re.sub(r'["\\\r\n]', "", value)
 
 
+def _decode_header(value):
+    """RFC 2047 headers arrive encoded; return readable text."""
+    if not value:
+        return ""
+    try:
+        return str(make_header(decode_header(value)))
+    except Exception:
+        return value
+
+
 @mcp.tool()
 def list_folders():
     "List all mailbox folders on the account."
@@ -183,8 +194,8 @@ def search_messages(folder="INBOX", sender=None, subject=None,
                 results.append({
                     "uid": uid.decode(),
                     "date": msg.get("Date", ""),
-                    "from": msg.get("From", ""),
-                    "subject": msg.get("Subject", ""),
+                    "from": _decode_header(msg.get("From", "")),
+                    "subject": _decode_header(msg.get("Subject", "")),
                 })
             return results
         finally:
@@ -239,10 +250,10 @@ def read_message(uid, folder="INBOX"):
             if len(body) > 50000:
                 body = body[:50000] + "\n\n[... truncated at 50,000 characters]"
             return {
-                "from": msg.get("From", ""),
-                "to": msg.get("To", ""),
+                "from": _decode_header(msg.get("From", "")),
+                "to": _decode_header(msg.get("To", "")),
                 "date": msg.get("Date", ""),
-                "subject": msg.get("Subject", ""),
+                "subject": _decode_header(msg.get("Subject", "")),
                 "body": body,
             }
         finally:

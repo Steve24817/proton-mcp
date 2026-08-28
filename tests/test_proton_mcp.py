@@ -358,3 +358,74 @@ def test_op_env_survives_missing_token_file(monkeypatch):
     monkeypatch.setattr(proton_mcp, "_OP_TOKEN_FILE", "/nonexistent/token")
     monkeypatch.delenv("OP_SERVICE_ACCOUNT_TOKEN", raising=False)
     assert "OP_SERVICE_ACCOUNT_TOKEN" not in proton_mcp._op_env()
+
+
+# --- RFC 2047 header decoding ---
+
+_ENCODED_SUBJECT = "=?utf-8?q?Here=E2=80=99s_your_August_One_Key_statement_=F0=9F=9B=8E?= =?utf-8?q?=EF=B8=8F?="
+
+
+def test_search_decodes_encoded_subject():
+    fake = FakeIMAP("127.0.0.1", 1143)
+    fake._search_results = b"1"
+    fake._fetch_responses = [
+        _make_search_header("1", "sender@x.com", "Fri, 10 Jan 2025", _ENCODED_SUBJECT),
+    ]
+    with patch("proton_mcp._connect", return_value=fake):
+        results = search_messages()
+    assert len(results) == 1
+    subj = results[0]["subject"]
+    assert "Here" in subj
+    assert "’" in subj  # curly apostrophe
+    assert "=?utf-8?" not in subj
+
+
+def test_search_decodes_encoded_from():
+    encoded_from = "=?utf-8?q?Jos=C3=A9_Garc=C3=ADa?= <jose@example.com>"
+    fake = FakeIMAP("127.0.0.1", 1143)
+    fake._search_results = b"1"
+    fake._fetch_responses = [
+        _make_search_header("1", encoded_from, "Fri, 10 Jan 2025", "Hello"),
+    ]
+    with patch("proton_mcp._connect", return_value=fake):
+        results = search_messages()
+    assert "José García" in results[0]["from"]
+
+
+def test_read_message_decodes_headers():
+    encoded_from = "=?utf-8?q?Jos=C3=A9?= <jose@example.com>"
+    encoded_to = "=?utf-8?q?Ren=C3=A9e?= <renee@example.com>"
+    fake = FakeIMAP("127.0.0.1", 1143)
+    fake._fetch_responses = [
+        _make_rfc822("1", encoded_from, encoded_to, "Mon, 13 Jan 2025", _ENCODED_SUBJECT, "body"),
+    ]
+    with patch("proton_mcp._connect", return_value=fake):
+        result = read_message("1")
+    assert "José" in result["from"]
+    assert "Renée" in result["to"]
+    assert "Here" in result["subject"]
+    assert "=?utf-8?" not in result["subject"]
+
+
+def test_decode_header_plain_ascii_unchanged():
+    fake = FakeIMAP("127.0.0.1", 1143)
+    fake._search_results = b"1"
+    fake._fetch_responses = [
+        _make_search_header("1", "plain@example.com", "Fri, 10 Jan 2025", "Just a plain subject"),
+    ]
+    with patch("proton_mcp._connect", return_value=fake):
+        results = search_messages()
+    assert results[0]["subject"] == "Just a plain subject"
+
+
+def test_decode_header_malformed_does_not_raise():
+    malformed = "=?utf-8?q?broken?= =?iso-8859-1?b?%%invalid??="
+    fake = FakeIMAP("127.0.0.1", 1143)
+    fake._search_results = b"1"
+    fake._fetch_responses = [
+        _make_search_header("1", "a@b.com", "Fri, 10 Jan 2025", malformed),
+    ]
+    with patch("proton_mcp._connect", return_value=fake):
+        results = search_messages()
+    # Must not raise; returning the raw value is acceptable.
+    assert isinstance(results[0]["subject"], str)
